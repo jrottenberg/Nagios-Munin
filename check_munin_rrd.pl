@@ -23,31 +23,31 @@
 # Boston, MA 02111-1307, USA
 
 # Globals
-$PROGNAME = "check_munin_rrd.pl";
+my $PROGNAME = "check_munin_rrd.pl";
+use POSIX qw(strftime);
 use RRDs;
 use strict;
 use Getopt::Long;
 use vars qw($opt_V $opt_v $opt_h $opt_w $opt_c $opt_h $opt_M $opt_d $opt_H $PROGNAME);
-#use lib "/home/ju/" ;
+#use lib "/home/ju/svn" ;
 use lib "/usr/lib/nagios/plugins" ;
 use utils qw(%ERRORS &print_revision &support &usage);
 
 # Munin specific
-my $datadir = "/var/lib/munin/";
-#my $datadir = "/home/ju/Desktop/munin_data/munin";
+my $datadir     = "/var/lib/munin";
 my $rrdpath	= undef;
-my $cf 			= "AVERAGE"; # munin stores its data in this CF for the latest.
+my $cf  	= "AVERAGE"; # munin stores its data in this CF for the latest.
 
 # check_munin_rrd specific
-my $DEBUG 				= 0;
-my $REVISION 			= "0.9";
+my $DEBUG 			= 0;
+my $REVISION 			= "1.0";
 my $hostname 			= undef;
-my $domain 				= undef;
-my $module 				= undef;
+my $domain 			= undef;
+my $module 			= undef;
 
 
 # nagios specific
-my $status 				= '0';
+my $status 		= '0';
 my $problem_on_name	= undef;
 my $problem_value 	= undef;
 
@@ -60,17 +60,16 @@ $ENV{'LC_ALL'}='C';
 
 
 
-
 Getopt::Long::Configure('bundling');
 GetOptions
-       ("V"   => \$opt_V, "version"    => \$opt_V,
-        "h"   => \$opt_h, "help"       => \$opt_h,
-        "v"		=> \$opt_v, "verbose"	 	 => \$opt_v,
-        "w=i" => \$opt_w, "warning=i"  => \$opt_w,
-        "c=i" => \$opt_c, "critical=i" => \$opt_c,
-        "D=s" => \$opt_d, "domain=s" 	 => \$opt_d,
-        "M=s" => \$opt_M, "module=s" 	 => \$opt_M,
-        "H=s" => \$opt_H, "hostname=s" => \$opt_H);
+       ("V"   => \$opt_V, "version"     => \$opt_V,
+        "h"   => \$opt_h, "help"        => \$opt_h,
+        "v"   => \$opt_v, "verbose"	=> \$opt_v,
+        "w=i" => \$opt_w, "warning=i"   => \$opt_w,
+        "c=i" => \$opt_c, "critical=i"  => \$opt_c,
+        "D=s" => \$opt_d, "domain=s"    => \$opt_d,
+        "M=s" => \$opt_M, "module=s"    => \$opt_M,
+        "H=s" => \$opt_H, "hostname=s"  => \$opt_H);
 
 
 # check if everything is ok
@@ -80,24 +79,49 @@ check_parameters();
 ## Open suggested directory
 if (-d $datadir."/".$domain) {
     $rrdpath = $datadir."/".$domain;
-   	printf "rrdpath : $rrdpath\n" if $DEBUG;
+    printf "rrdpath : $rrdpath\n" if $DEBUG;
+
 } else {
 		printf ("No such directory $datadir/$domain\n");
 		exit $ERRORS{"CRITICAL"};
 }
 
-my $next 					= undef;
-my $response_text	= '';
-my $name					= undef;
+my $next 		= undef;
+my $response_text       = '';
+my $name		= undef;
 print "Opening $rrdpath/$hostname-$module-*-g.rrd\n" if $DEBUG;
+my $list_rrd            = <$rrdpath/$hostname-$module-*.rrd>;
+
+   if (! $list_rrd) { 
+    printf ("No such files $rrdpath/$hostname-$module-*.rrd  Are you sure the domain defined in munin is correct ?\n");
+    exit $ERRORS{"CRITICAL"}; 
+    }
+
 	while (defined($next = <$rrdpath/$hostname-$module-*.rrd>)) {
 
-			print "\nDoing : $next\n" if $DEBUG;
+    	    print "\nDoing : $next\n" if $DEBUG;
+
+
 
 			if ($next =~ /$hostname-$module-(\w+)-[a-z]\.rrd$/im) {
 					$name = sanitize($1);			# Let's have a nicer output, some lines from Munin are not useful var_run for module df for example
 
+
+
+
 					if ($name) {
+
+                                            my $mtime = (stat( $next ))[9];
+                                            printf $mtime if $DEBUG; 
+                                            my $now_string  = time; 
+                                            printf "\n$now_string \n" if $DEBUG;
+                                            my $seconds_diff = $now_string - $mtime;
+                                            if ($seconds_diff > 600) {
+                                                my $formated_mtime = strftime "%d-%b-%Y %H:%M:%S %Z", localtime($mtime);
+                                                print "Problem on $next : data are too old, $formated_mtime\n";
+                                                exit $ERRORS{"UNKNOWN"};
+                                            }
+
 							print "Module_part : $name\n" if $DEBUG;
 							my $value = get_last_rrd_data($next);
 							print "$name : $value\n" if $DEBUG;
@@ -117,7 +141,6 @@ print "Opening $rrdpath/$hostname-$module-*-g.rrd\n" if $DEBUG;
 					}
 			}
 	}
-
 
 
 if ($status eq 1) {
