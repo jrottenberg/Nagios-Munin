@@ -65,8 +65,8 @@ GetOptions
        ("V"   => \$opt_V, "version"     => \$opt_V,
         "h"   => \$opt_h, "help"        => \$opt_h,
         "v"   => \$opt_v, "verbose"	=> \$opt_v,
-        "w=i" => \$opt_w, "warning=i"   => \$opt_w,
-        "c=i" => \$opt_c, "critical=i"  => \$opt_c,
+        "w=f" => \$opt_w, "warning=f"   => \$opt_w,
+        "c=f" => \$opt_c, "critical=f"  => \$opt_c,
         "D=s" => \$opt_d, "domain=s"    => \$opt_d,
         "M=s" => \$opt_M, "module=s"    => \$opt_M,
         "H=s" => \$opt_H, "hostname=s"  => \$opt_H);
