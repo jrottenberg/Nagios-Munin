@@ -34,29 +34,29 @@ use lib "/usr/lib/nagios/plugins" ;
 use utils qw(%ERRORS &print_revision &support &usage);
 
 # Munin specific
-my $datadir     = "/var/lib/munin";
-my $rrdpath	= undef;
-my $cf  	= "AVERAGE"; # munin stores its data in this CF for the latest.
+my $datadir = "/var/lib/munin";
+my $rrdpath = undef;
+my $cf      = "AVERAGE"; # munin stores its data in this CF for the latest.
 
 # check_munin_rrd specific
-my $DEBUG 			= 0;
-my $REVISION 			= "1.0";
-my $hostname 			= undef;
-my $domain 			= undef;
-my $module 			= undef;
+my $DEBUG       = 0;
+my $REVISION    = "1.0";
+my $hostname    = undef;
+my $domain 		= undef;
+my $module 		= undef;
 
 
 # nagios specific
-my $status 		= '0';
+my $status 		    = '0';
 my $problem_on_name	= undef;
 my $problem_value 	= undef;
 
 
 sub in ($$);
-$ENV{'BASH_ENV'}='';
-$ENV{'ENV'}='';
-$ENV{'PATH'}='';
-$ENV{'LC_ALL'}='C';
+$ENV{'BASH_ENV'}= '';
+$ENV{'ENV'}     = '';
+$ENV{'PATH'}    = '';
+$ENV{'LC_ALL'}  = 'C';
 
 
 
@@ -64,7 +64,7 @@ Getopt::Long::Configure('bundling');
 GetOptions
        ("V"   => \$opt_V, "version"     => \$opt_V,
         "h"   => \$opt_h, "help"        => \$opt_h,
-        "v"   => \$opt_v, "verbose"	=> \$opt_v,
+        "v"   => \$opt_v, "verbose"	    => \$opt_v,
         "w=f" => \$opt_w, "warning=f"   => \$opt_w,
         "c=f" => \$opt_c, "critical=f"  => \$opt_c,
         "D=s" => \$opt_d, "domain=s"    => \$opt_d,
