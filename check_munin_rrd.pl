@@ -21,17 +21,42 @@
 # along with this program (or with Nagios);  if not, write to the
 # Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 # Boston, MA 02111-1307, USA
+#
+#
+# Changelog :
+#
+# 20090624 - check_munin can now exclude values from RRD
+# Ex :
+#   check_munin_rrd.pl -M df -H app1v.domain.org -w 5 -c 10 -e /dev/xvda1
+#   will ignore that drive from the checks
+# Thanks to cjdaniel
+#
+#
+#
+#
+
+
+
 
 # Globals
 my $PROGNAME = "check_munin_rrd.pl";
 use POSIX qw(strftime);
-use RRDs;
+
+eval { require RRDs; };
+if ($@) {
+  print "You need an extra package to make that work :
+  - librrds-perl on Debian/Ubuntu 
+  - rrdtool-perl on RHEL/Centos\n";
+  exit 2;
+}
+
 use strict;
 use Getopt::Long;
-use vars qw($opt_V $opt_v $opt_h $opt_w $opt_c $opt_h $opt_M $opt_d $opt_H $PROGNAME);
-#use lib "/home/ju/svn" ;
+use vars qw($opt_V $opt_v $opt_h $opt_w $opt_c $opt_e $opt_h $opt_M $opt_d $opt_H $PROGNAME);
+
 use lib "/usr/lib/nagios/plugins" ;
 use utils qw(%ERRORS &print_revision &support &usage);
+my @exclude_names = undef;
 
 # Munin specific
 my $datadir = "/var/lib/munin";
@@ -39,12 +64,12 @@ my $rrdpath = undef;
 my $cf      = "AVERAGE"; # munin stores its data in this CF for the latest.
 
 # check_munin_rrd specific
-my $DEBUG       = 0;
-my $REVISION    = "1.0";
+my $REVISION    = "1.1";
 my $hostname    = undef;
-my $domain 		= undef;
-my $module 		= undef;
+my $domain      = undef;
+my $module      = undef;
 
+my $DEBUG              = undef;
 
 # nagios specific
 my $status 		    = '0';
@@ -53,10 +78,11 @@ my $problem_value 	= undef;
 
 
 sub in ($$);
-$ENV{'BASH_ENV'}= '';
-$ENV{'ENV'}     = '';
-$ENV{'PATH'}    = '';
-$ENV{'LC_ALL'}  = 'C';
+$ENV{'BASH_ENV'} = '';
+$ENV{'ENV'}      = '';
+$ENV{'PATH'}     = '';
+$ENV{'LC_ALL'}   = 'C';
+
 
 
 
@@ -64,7 +90,8 @@ Getopt::Long::Configure('bundling');
 GetOptions
        ("V"   => \$opt_V, "version"     => \$opt_V,
         "h"   => \$opt_h, "help"        => \$opt_h,
-        "v"   => \$opt_v, "verbose"	    => \$opt_v,
+        "v"   => \$opt_v, "verbose"	 => \$opt_v,
+        "e=s" => \$opt_e, "exclude=s"	 => \$opt_e,
         "w=f" => \$opt_w, "warning=f"   => \$opt_w,
         "c=f" => \$opt_c, "critical=f"  => \$opt_c,
         "D=s" => \$opt_d, "domain=s"    => \$opt_d,
@@ -126,15 +153,18 @@ my $list_rrd            = <$rrdpath/$hostname-$module-*.rrd>;
 							my $value = get_last_rrd_data($next);
 							print "$name : $value\n" if $DEBUG;
 
-							if (($value> $opt_w) && ($status ne 2))	{
-											 $status = "1";
-											 $problem_on_name = $name;
-											 $problem_value = $value;
-							}
-							if ( $value > $opt_c){
-											 $status = "2";
-											 $problem_on_name = $name;
-											 $problem_value = $value;
+
+							unless (grep ($_ eq $name, @exclude_names)) { 
+								if (($value> $opt_w) && ($status ne 2))	{
+												 $status = "1";
+												 $problem_on_name = $name;
+												 $problem_value = $value;
+								}
+								if ($value > $opt_c){
+												 $status = "2";
+												 $problem_on_name = $name;
+												 $problem_value = $value;
+								}
 							}
 							$response_text .= "$name: $value ";
 							print "Response text : $response_text\n" if $DEBUG;
@@ -144,11 +174,11 @@ my $list_rrd            = <$rrdpath/$hostname-$module-*.rrd>;
 
 
 if ($status eq 1) {
-       print "$problem_on_name value $problem_value, is above warning treshold $opt_w\n";
+       print "$problem_on_name value $problem_value, is above warning threshold $opt_w\n";
        $status = $ERRORS{"WARNING"};
 
 } elsif ($status eq 2) {
-       print "$problem_on_name value $problem_value,  is above critical treshold $opt_c\n";
+       print "$problem_on_name value $problem_value, is above critical threshold $opt_c\n";
        $status = $ERRORS{"CRITICAL"};
 
 } else {
@@ -259,11 +289,17 @@ sub check_parameters {
 		 exit $ERRORS{"UNKNOWN"};
 	}
 
+	if(!defined($opt_e)) {
+		@exclude_names = ( '' );
+	} else {
+		@exclude_names = split(/,/, $opt_e);
+	}
+
 } # end check_options
 
 
 sub print_usage () {
-   print "Usage: $0  -H <host> -M <Module> [-D <domain>] -w <warn level> -c <crit level> [-V]\n";
+   print "Usage: $0  -H <host> -M <Module> [-D <domain>] -w <warn level> -c <crit level> [-e <exclude value>] [-V]\n";
 }
 
 
@@ -283,6 +319,9 @@ sub print_help () {
        warning level
 -c, --crit=INTEGER
        critical level
+-e, --exclude=EXCLUDE VALUE
+       exclude the value(s) (multiples should be comma-separated) from the RRD
+       e.g., use this to exclude "idle" CPU value from warning/critical checks
 -v	--verbose
 			 Be verbose
 -V, --version
