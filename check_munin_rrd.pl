@@ -21,42 +21,18 @@
 # along with this program (or with Nagios);  if not, write to the
 # Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 # Boston, MA 02111-1307, USA
-#
-#
-# Changelog :
-#
-# 20090624 - check_munin can now exclude values from RRD
-# Ex :
-#   check_munin_rrd.pl -M df -H app1v.domain.org -w 5 -c 10 -e /dev/xvda1
-#   will ignore that drive from the checks
-# Thanks to cjdaniel
-#
-#
-#
-#
-
-
-
 
 # Globals
 my $PROGNAME = "check_munin_rrd.pl";
 use POSIX qw(strftime);
-
-eval { require RRDs; };
-if ($@) {
-  print "You need an extra package to make that work :
-  - librrds-perl on Debian/Ubuntu 
-  - rrdtool-perl on RHEL/Centos\n";
-  exit 2;
-}
-
-use strict;
+use RRDs;
 use Getopt::Long;
-use vars qw($opt_V $opt_v $opt_h $opt_w $opt_c $opt_e $opt_h $opt_M $opt_d $opt_H $PROGNAME);
+use File::Find ();
 
-use lib "/usr/lib/nagios/plugins" ;
+use vars qw($opt_V $opt_v $opt_h $opt_w $opt_c $opt_h $opt_M $opt_d $opt_H $opt_D $PROGNAME);
+
+use lib "/usr/lib64/nagios/plugins" ;
 use utils qw(%ERRORS &print_revision &support &usage);
-my @exclude_names = undef;
 
 # Munin specific
 my $datadir = "/var/lib/munin";
@@ -64,25 +40,24 @@ my $rrdpath = undef;
 my $cf      = "AVERAGE"; # munin stores its data in this CF for the latest.
 
 # check_munin_rrd specific
-my $REVISION    = "1.1";
+my $DEBUG       = 0;
+my $REVISION    = "1.0";
 my $hostname    = undef;
 my $domain      = undef;
 my $module      = undef;
 
-my $DEBUG              = undef;
 
 # nagios specific
-my $status 		    = '0';
-my $problem_on_name	= undef;
-my $problem_value 	= undef;
+my $status          = '0';
+my $problem_on_name = undef;
+my $problem_value   = undef;
 
 
 sub in ($$);
-$ENV{'BASH_ENV'} = '';
-$ENV{'ENV'}      = '';
-$ENV{'PATH'}     = '';
-$ENV{'LC_ALL'}   = 'C';
-
+$ENV{'BASH_ENV'}='';
+$ENV{'ENV'}='';
+$ENV{'PATH'}='';
+$ENV{'LC_ALL'}='C';
 
 
 
@@ -90,11 +65,11 @@ Getopt::Long::Configure('bundling');
 GetOptions
        ("V"   => \$opt_V, "version"     => \$opt_V,
         "h"   => \$opt_h, "help"        => \$opt_h,
-        "v"   => \$opt_v, "verbose"	 => \$opt_v,
-        "e=s" => \$opt_e, "exclude=s"	 => \$opt_e,
-        "w=f" => \$opt_w, "warning=f"   => \$opt_w,
-        "c=f" => \$opt_c, "critical=f"  => \$opt_c,
-        "D=s" => \$opt_d, "domain=s"    => \$opt_d,
+        "v"   => \$opt_v, "verbose"     => \$opt_v,
+        "w=i" => \$opt_w, "warning=i"   => \$opt_w,
+        "c=i" => \$opt_c, "critical=i"  => \$opt_c,
+        "d=s" => \$opt_d, "domain=s"    => \$opt_d,
+        "D=s" => \$opt_D, "datadir=s"   => \$opt_D,
         "M=s" => \$opt_M, "module=s"    => \$opt_M,
         "H=s" => \$opt_H, "hostname=s"  => \$opt_H);
 
@@ -109,76 +84,80 @@ if (-d $datadir."/".$domain) {
     printf "rrdpath : $rrdpath\n" if $DEBUG;
 
 } else {
-		printf ("No such directory $datadir/$domain\n");
-		exit $ERRORS{"CRITICAL"};
+        printf ("No such directory $datadir/$domain\n");
+        exit $ERRORS{"CRITICAL"};
 }
 
-my $next 		= undef;
 my $response_text       = '';
-my $name		= undef;
 print "Opening $rrdpath/$hostname-$module-*-g.rrd\n" if $DEBUG;
-my $list_rrd            = <$rrdpath/$hostname-$module-*.rrd>;
+my @rrd = <$rrdpath/$hostname-$module-*.rrd>;
+printf ($#rrd+1 ." rrd(s) found\n") if  $DEBUG;
 
-   if (! $list_rrd) { 
-    printf ("No such files $rrdpath/$hostname-$module-*.rrd  Are you sure the domain defined in munin is correct ?\n");
-    exit $ERRORS{"CRITICAL"}; 
+# we did'nt find any rrd there...
+if ($#rrd < 1) { 
+    printf("\nSearch for $hostname-$module-*.rrd on $datadir\n") if $DEBUG;
+    # Let's try a search before to fail
+    sub wanted {
+            if ( $File::Find::name =~ "$hostname-$module-([-_0-9a-z]*)\.rrd" ) {
+                printf("FOUND : $File::Find::name\n") if $DEBUG;
+                push (@rrd, $File::Find::name);
+            }
+    }            
+    File::Find::find(\&wanted, $datadir); 
+    if ($#rrd < 1) { 
+        printf ("No such files $rrdpath/$hostname-$module-*.rrd  Are you sure the domain defined in munin is correct ?\n");
+        exit $ERRORS{"CRITICAL"}; 
+    }    
+}
+
+printf ($#rrd+1 ." rrd(s) found\n") if  $DEBUG;
+foreach (@rrd) {
+    my $current_rrd = $_;
+    print "\nDoing : $current_rrd\n" if $DEBUG;
+    if ($current_rrd =~ /$hostname-$module-(\w+)-[a-z]\.rrd$/im) {
+        my $component = sanitize($1);  # Let's have a nicer output, 
+                                    #some lines from Munin are not useful var_run for module df for example
+        printf($component) if $DEBUG;
+        if ($component ne "") {
+            my $mtime = (stat( $current_rrd ))[9];
+            printf $mtime if $DEBUG; 
+            my $now_string  = time; 
+            printf "\n$now_string \n" if $DEBUG;
+            my $seconds_diff = $now_string - $mtime;
+            if ($seconds_diff > 600) {
+                my $formated_mtime = strftime "%d-%b-%Y %H:%M:%S %Z", localtime($mtime);
+                print "Problem on $current_rrd : data are too old, $formated_mtime\n";
+                exit $ERRORS{"UNKNOWN"};
+            }
+            print "Module_part : $component\n" if $DEBUG;
+            my $value = get_last_rrd_data($current_rrd);
+            print "$component : $value\n" if $DEBUG;
+            if (($value> $opt_w) && ($status ne 2)) {
+                $status = "1";
+                $problem_on_name = $component;
+                $problem_value = $value;
+            }
+            if ( $value > $opt_c){
+                $status = "2";
+                $problem_on_name = $component;
+                $problem_value = $value;
+            }
+            $response_text .= "$component: $value ";
+            print "Response text : $response_text\n" if $DEBUG;
+        }    
+        else {
+            printf "Nothing to do \n" if $DEBUG;
+        }
     }
-
-	while (defined($next = <$rrdpath/$hostname-$module-*.rrd>)) {
-
-    	    print "\nDoing : $next\n" if $DEBUG;
-
-
-
-			if ($next =~ /$hostname-$module-(\w+)-[a-z]\.rrd$/im) {
-					$name = sanitize($1);			# Let's have a nicer output, some lines from Munin are not useful var_run for module df for example
-
-
-
-
-					if ($name) {
-
-                                            my $mtime = (stat( $next ))[9];
-                                            printf $mtime if $DEBUG; 
-                                            my $now_string  = time; 
-                                            printf "\n$now_string \n" if $DEBUG;
-                                            my $seconds_diff = $now_string - $mtime;
-                                            if ($seconds_diff > 600) {
-                                                my $formated_mtime = strftime "%d-%b-%Y %H:%M:%S %Z", localtime($mtime);
-                                                print "Problem on $next : data are too old, $formated_mtime\n";
-                                                exit $ERRORS{"UNKNOWN"};
-                                            }
-
-							print "Module_part : $name\n" if $DEBUG;
-							my $value = get_last_rrd_data($next);
-							print "$name : $value\n" if $DEBUG;
-
-
-							unless (grep ($_ eq $name, @exclude_names)) { 
-								if (($value> $opt_w) && ($status ne 2))	{
-												 $status = "1";
-												 $problem_on_name = $name;
-												 $problem_value = $value;
-								}
-								if ($value > $opt_c){
-												 $status = "2";
-												 $problem_on_name = $name;
-												 $problem_value = $value;
-								}
-							}
-							$response_text .= "$name: $value ";
-							print "Response text : $response_text\n" if $DEBUG;
-					}
-			}
-	}
+}
 
 
 if ($status eq 1) {
-       print "$problem_on_name value $problem_value, is above warning threshold $opt_w\n";
+       print "$problem_on_name value $problem_value, is above warning treshold $opt_w\n";
        $status = $ERRORS{"WARNING"};
 
 } elsif ($status eq 2) {
-       print "$problem_on_name value $problem_value, is above critical threshold $opt_c\n";
+       print "$problem_on_name value $problem_value,  is above critical treshold $opt_c\n";
        $status = $ERRORS{"CRITICAL"};
 
 } else {
@@ -198,108 +177,123 @@ exit $status;
 
 # Decypher the rrd black box ^^
 sub get_last_rrd_data {
-	my $rrdfile = shift;
-	my $last = RRDs::last($rrdfile) or die "get last value failed ($RRDs::error)";
-	my $start = $last - 300; # Damn rrd ! we may get two values, the one we want and 0.0, we will focus on the first ;-)
+    my $rrdfile = shift;
+    my $last = RRDs::last($rrdfile) or die "get last value failed ($RRDs::error)";
+    my $start = $last - 300; # Damn rrd ! we may get two values, the one we want and 0.0, we will focus on the first ;-)
+    my ($rrdstart, $step, $names, $data) =  RRDs::fetch($rrdfile, "--start=$start", "--end=$last", $cf) or die "fetch failed ($RRDs::error)";
 
-	my ($rrdstart, $step, $names, $data) =  RRDs::fetch($rrdfile, "--start=$start", "--end=$last", $cf) or die "fetch failed ($RRDs::error)";
-	my $value = shift(@$data); # We need only the first one
-														 # We would have :
-														 # fresh_data
-														 # or
-														 # fresh_data
-														 # 0.0
-	return sprintf ("%2.1f",@$value); # more human readable format
+    my $line;
+    my $val;
+    my $value;
+    my $d_start = $start;
+    foreach $line (@$data) {
+        print "@ $d_start: "  if $DEBUG;
+        $d_start += $step;
+        foreach $val (@$line) { 
+            if ( ! $val ) { 
+                print "(undef)\n" if $DEBUG;
+            }
+            else {
+                 print "$val \n"  if $DEBUG;
+                 $value = $val;
+            }
+        }
+    }
+    if ( ! $value ) {
+        print "(undef)\n" if $DEBUG;
+    }
+    else {
+        return sprintf ("%2.1f",$value); # more human readable format
+    }
 }
 
 
 # sanitize for human readable output
 sub sanitize {
-	my $var = shift;
-	if ($opt_M eq "df") {
-			if (($var !~ m/dev/ ) || ($var =~ m/udev/) || ($var =~ m/shm/)) {	# Get rid of non physical drives
-					$var = undef;
-			}
-			else {
-						$var =~ s/\_/\//g;
-			}
-	}
-	return $var;
+    my $var = shift;
+    if ($opt_M eq "df") {
+            if (($var !~ m/dev/ ) || ($var =~ m/udev/) || ($var =~ m/shm/)) {   # Get rid of non physical drives
+                    $var = "";
+            }
+            else {
+                    $var =~ s/\_/\//g;
+            }
+    }
+    return $var;
 }
 
 
 
 # That one check parameters
 sub check_parameters {
-	# Basic checks
-	if ($opt_V) {
-			 print_revision($PROGNAME,'$Revision: '.$REVISION.' $');
-			 exit $ERRORS{'UNKNOWN'};
-	}
+    # Basic checks
+    if ($opt_V) {
+             print_revision($PROGNAME,'$Revision: '.$REVISION.' $');
+             exit $ERRORS{'UNKNOWN'};
+    }
 
-	if ($opt_h) {
-			 print_help ();
-			 print_revision($PROGNAME,'$Revision: '.$REVISION. ' $');
-			 exit $ERRORS{'UNKNOWN'};
-	}
+    if ($opt_h) {
+             print_help ();
+             print_revision($PROGNAME,'$Revision: '.$REVISION. ' $');
+             exit $ERRORS{'UNKNOWN'};
+    }
 
-	if ($opt_v)	{
-		$DEBUG = 1;
-	}
+    if ($opt_v) {
+        $DEBUG = 1;
+    }
 
-	if (!defined($opt_H))	{
-			print "Hostname requested !\n";
-			print_usage();
-			exit $ERRORS{"UNKNOWN"}
-	} else {
-			$hostname = $opt_H if (utils::is_hostname($opt_H));
-   		($hostname) || usage("Invalid hostname or address : $opt_H\n");
-   		printf "Hostname : $hostname\n" if $DEBUG;
-			if ($hostname =~ /([^\.\/]+\.[^\.\/]+)$/m) {
-				$domain = $1;
-				printf "Computed Domain : $domain\n" if $DEBUG;
-			}
-	}
+    if (!defined($opt_H))   {
+            print "Hostname requested !\n";
+            print_usage();
+            exit $ERRORS{"UNKNOWN"}
+    } else {
+            $hostname = $opt_H if (utils::is_hostname($opt_H));
+            ($hostname) || usage("Invalid hostname or address : $opt_H\n");
+            printf "Hostname : $hostname\n" if $DEBUG;
+            if ($hostname =~ /([^\.\/]+\.[^\.\/]+)$/m) {
+                $domain = $1;
+                printf "Computed Domain : $domain\n" if $DEBUG;
+            }
+    }
 
-	if (defined($opt_M))	{
-			$module = $opt_M;
-			printf "Module : $module\n" if $DEBUG;
-	} else {
-			print "Which module do you want to check ?\n";
-		 	print_usage();
-		 	exit $ERRORS{"UNKNOWN"};
-	}
+    if (defined($opt_D))    {
+            $datadir = $opt_D;
+            printf "Datadir : $datadir\n" if $DEBUG;
+    }
 
-	if (defined($opt_d))	{
-			$domain = $opt_d;
-	} else {
-				if (!defined($domain)) {
-						print "I can't guess your domain, please add the domain manually\n";
-						print_usage();
-						exit $ERRORS{"UNKNOWN"};
-				}
-	}
+    if (defined($opt_M))    {
+            $module = $opt_M;
+            printf "Module : $module\n" if $DEBUG;
+    } else {
+            print "Which module do you want to check ?\n";
+            print_usage();
+            exit $ERRORS{"UNKNOWN"};
+    }
 
-	printf "Domain : $domain\n" if $DEBUG;
+    if (defined($opt_d))    {
+            $domain = $opt_d;
+    } else {
+                if (!defined($domain)) {
+                        print "I can't guess your domain, please add the domain manually\n";
+                        print_usage();
+                        exit $ERRORS{"UNKNOWN"};
+                }
+    }
 
-	# Check warnings and critical
-	if (!defined($opt_w) || !defined($opt_c)) {
-		 print "put warning and critical info !\n";
-		 print_usage();
-		 exit $ERRORS{"UNKNOWN"};
-	}
+    printf "Domain : $domain\n" if $DEBUG;
 
-	if(!defined($opt_e)) {
-		@exclude_names = ( '' );
-	} else {
-		@exclude_names = split(/,/, $opt_e);
-	}
+    # Check warnings and critical
+    if (!defined($opt_w) || !defined($opt_c)) {
+         print "put warning and critical info !\n";
+         print_usage();
+         exit $ERRORS{"UNKNOWN"};
+    }
 
 } # end check_options
 
 
 sub print_usage () {
-   print "Usage: $0  -H <host> -M <Module> [-D <domain>] -w <warn level> -c <crit level> [-e <exclude value>] [-V]\n";
+   print "Usage: $0  -H <host> -M <Module> [-d <domain>] -w <warn level> -c <crit level> [-V] [-D <datadir>]\n";
 }
 
 
@@ -313,19 +307,19 @@ sub print_help () {
        name or IP address of host to check
 -M, --module=MUNIN MODULE
        Munin module value to fetch
--D, --domain=DOMAIN
+-d, --domain=DOMAIN
        Domain as defined in munin
 -w, --warn=INTEGER
        warning level
 -c, --crit=INTEGER
        critical level
--e, --exclude=EXCLUDE VALUE
-       exclude the value(s) (multiples should be comma-separated) from the RRD
-       e.g., use this to exclude "idle" CPU value from warning/critical checks
--v	--verbose
-			 Be verbose
+-v  --verbose
+       Be verbose
 -V, --version
        prints version number
+-D, --datadir
+       In case your datadir for munin is not /var/lib/munin
 EOT
 }
+
 
