@@ -93,7 +93,7 @@ print "Opening $rrdpath/$hostname-$module-*-g.rrd\n" if $DEBUG;
 my @rrd = <$rrdpath/$hostname-$module-*.rrd>;
 printf ($#rrd+1 ." rrd(s) found\n") if  $DEBUG;
 
-# we did'nt find any rrd there...
+# we didn't find any rrd there...
 if ($#rrd < 0) { 
     printf("\nSearch for $hostname-$module-*.rrd on $datadir\n") if $DEBUG;
     # Let's try a search before to fail
