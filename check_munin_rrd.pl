@@ -41,7 +41,7 @@ my $cf      = "AVERAGE"; # munin stores its data in this CF for the latest.
 
 # check_munin_rrd specific
 my $DEBUG       = 0;
-my $REVISION    = "1.0";
+my $REVISION    = "1.1";
 my $hostname    = undef;
 my $domain      = undef;
 my $module      = undef;
@@ -94,7 +94,7 @@ my @rrd = <$rrdpath/$hostname-$module-*.rrd>;
 printf ($#rrd+1 ." rrd(s) found\n") if  $DEBUG;
 
 # we did'nt find any rrd there...
-if ($#rrd < 1) { 
+if ($#rrd < 0) { 
     printf("\nSearch for $hostname-$module-*.rrd on $datadir\n") if $DEBUG;
     # Let's try a search before to fail
     sub wanted {
@@ -104,7 +104,7 @@ if ($#rrd < 1) {
             }
     }            
     File::Find::find(\&wanted, $datadir); 
-    if ($#rrd < 1) { 
+    if ($#rrd < 0) { 
         printf ("No such files $rrdpath/$hostname-$module-*.rrd  Are you sure the domain defined in munin is correct ?\n");
         exit $ERRORS{"CRITICAL"}; 
     }    
